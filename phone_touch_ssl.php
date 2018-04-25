@@ -3,25 +3,29 @@
 //#############################################################################
 //
 //   AudioCodes IP Phones web-API control script
-//   v.1.1
+//   v.2.2
 //   Coded by Dmitry Nikitin (d.nikitin@gge.ru)
 //
 //   Command-line options:
 //   -R Force ALL found devices to reboot
 //   -r Force *unregistered* devices to reboot
 //   -s Scan only (no reboot at all)
-//   -c Get IP addresses from a hostname/IP specified as [source]
+//   -c Get IP addresses from Cisco hostname/IP specified as [source]
+//   -h Get IP addresses from HPE hostname/IP specified as [source]
 //   -f Get IP addresses from file specified as [source]
 //
 //   REQUIREMENTS:
 //   PHP (php-cli) version 5.x or higher
 //   HTTP::Response2 PHP module (pear)
+//   sshpass to take password from command line (reading from file)
 //   clogin (rancid) tools to retrieve ARP/IP lists directly from Cisco switch
 //   
 //   CONSTANTS
 //   LOGIN		- default username for 440HD
 //   PASS		- default password for 440HD
-//   CLOGIN		- path to clogin executable
+//   CMD_SSH	- sshpass/ssh command line
+//   CMD_ARP	- arp table display command (HPE specific)
+//   CLOGIN		- clogin path/command
 //   DEBUG		- true/false allow/disallow debug & errors output
 //
 //#############################################################################
@@ -31,9 +35,12 @@ require_once 'HTTP/Request2.php';
 // DEFINITIONS ===============================================================
 
 define ('LOGIN'	,	'admin');
-define ('PASS'	,	'1234');
-define ('CLOGIN',	'/home/dnikitin/bin/clogin -u admin -c "terminal length 0; show ip arp vrf LAN | inc 0090.8f85; exit" '); 
+define ('PASS'	,	'223344');
 define ('DEBUG'	,	false);
+define ('EXCLUDE',	'/home/dnikitin/.phone_touch_exclude');
+define ('CMD_SSH',	'/usr/bin/sshpass -f /home/dnikitin/.netsecret ssh 00uc_net@');
+define ('CMD_ARP',	' "disp arp | inc 0090.8f85"');
+define ('CLOGIN',	'/home/dnikitin/bin/clogin -u 00uc_net -c "terminal length 0; show arp | inc 0090.8f85; exit" '); 
 
 if (DEBUG) {
 	error_reporting(E_ALL);
@@ -52,7 +59,10 @@ if (count($argv) <= 1) {
 	if (isset($argv[2]) && isset($argv[3])) {
 		if ($argv[2] == '-c') {
 			echo "Getting IP list from Cisco [$argv[3]]: ";
-			$iplist = parseFromSwitch($argv[3]);
+			$iplist = parseFromCisco($argv[3]);
+		} elseif ($argv[2] == '-h') {
+			echo "Getting IP list from HP $argv[3]: ";
+			$iplist = parseFromHP($argv[3]);
 		} elseif ($argv[2] == '-f') {
 			echo "Getting IP addresses from $argv[3]: ";
 			$iplist = parseFromFile($argv[3]);
@@ -64,28 +74,37 @@ if (count($argv) <= 1) {
 	} else {
 		showHelp(preg_replace('/^.*\//', '', $argv[0]));
 	}
-exit;
+#exit;
 	if (($argv[1] == '-R') || ($argv[1] == '-r') || ($argv[1] == '-s')) {
 		echo "Starting scan/restart process:\n";
 		sort($iplist, SORT_NATURAL);
-		foreach ($iplist as $ip) {
+		$exlist = getExclusions(EXCLUDE);
+		$count = 1;
+		foreach ($iplist as $data) {
+			list($ip, $mac) = explode(":", $data);
+			printf("[%s] #%'02d %s (%s) -> ", date('Y/m/d H:i:s'), $count, $ip, $mac);
 			$count++;
-			//if ($count > 10) break; // TEST SUITE
-			printf("[%s] #%'02d %s -> ", date('Y/m/d H:i:s'), $count, $ip);
-			$status = checkStatus($ip);
-			if ($status == 0) { // Unregistered
-				if ($argv[1] == '-R' || $argv[1] == '-r') {
-					echo "UNREGISTERED -> Reboot\n";
-					forceReboot($ip);
+			if (count($exlist)) {
+				if (!in_array($mac, $exlist)) {
+					//if ($count > 10) break; // TEST SUITE
+					$status = checkStatus($ip);
+					if ($status == 0) { // Unregistered
+						if ($argv[1] == '-R' || $argv[1] == '-r') {
+							echo "UNREGISTERED -> Reboot\n";
+							forceReboot($ip);
+						} else {
+							echo "UNREGISTERED\n";
+						}
+					} elseif ($status == 1) { // Registered
+						if ($argv[1] == '-R') {
+							echo "FORCED reboot!\n";
+							forceReboot($ip);
+						} else {
+							echo "Registered\n";
+						}
+					}
 				} else {
-					echo "UNREGISTERED\n";
-				}
-			} elseif ($status == 1) { // Registered
-				if ($argn[1] == '-R') {
-					echo "FORCED reboot!\n";
-					forceReboot($ip);
-				} else {
-					echo "Registered\n";
+					echo "Skipped (found in exclusions)\n";
 				}
 			}
 		}
@@ -100,13 +119,32 @@ exit;
 // FUNCTIONS =================================================================
 
 # Getting IP addresses from Cisco switch
-function parseFromSwitch($host) {
+function parseFromCisco($host) {
 	$rawlist = array();
 	$iplist = array();
 	exec(CLOGIN.$host, $rawlist);
 	foreach ($rawlist as $rec) {
-		$pattern = '/^Internet\s+(\d+)\.(\d+)\.(\d+)\.(\d+).*$/';
-		$replacement = '$1.$2.$3.$4';
+		$pattern = '/^Internet\s+(\d+)\.(\d+)\.(\d+)\.(\d+)\s+\d+\s+(\w+)\.(\w+)\.(\w+).*$/';
+		$replacement = '$1.$2.$3.$4:$5$6$7';
+		if (preg_match($pattern, $rec)) { 
+			array_push($iplist, preg_replace($pattern, $replacement, $rec));
+		}
+	}
+	//exit;
+	return $iplist;
+}
+
+# Getting IP addresses from HP switch
+function parseFromHP($host) {
+	$rawlist = array();
+	$iplist = array();
+	if (DEBUG) {
+		echo "\nDebug (exec): ".CMD_SSH.$host.CMD_ARP_HP."\n";
+	}
+	exec(CMD_SSH.$host.CMD_ARP, $rawlist);
+	foreach ($rawlist as $rec) {
+		$pattern = '/^(\d+)\.(\d+)\.(\d+)\.(\d+)\s+(\w+)-(\w+)-(\w+)\s+.*$/';
+		$replacement = '$1.$2.$3.$4:$5$6$7';
 		if (preg_match($pattern, $rec)) { 
 			array_push($iplist, preg_replace($pattern, $replacement, $rec));
 		}
@@ -125,6 +163,19 @@ function parseFromFile($filename) {
 	}
 	fclose($file);
 	return $iplist;
+}
+
+# Getting exclusions from file
+function getExclusions($filename) {
+	$exlist = array();
+	$file = fopen($filename, 'r');
+	if ($file) {
+		while ($buffer = fgets($file, 256)) {
+			array_push($exlist, trim($buffer));
+		}
+		fclose($file);
+		return $exlist;
+	}
 }
 
 function checkStatus($ip) {
@@ -206,14 +257,20 @@ function showHelp($scriptname) {
 	print<<<END
 
 Usage:
-	$scriptname [-option] [-c|-f] [source]
+	$scriptname COMMAND OPTION SOURCE
 
-Options:
+Commands:
 	-R Force ALL found devices to reboot
 	-r Force *unregistered* devices to reboot
 	-s Scan only (no reboot at all)
-	-c Get IP addresses from a hostname/IP specified as [source]
-	-f Get IP addresses from file specified as [source]
+
+Options:
+	-c Get IP addresses from Cisco switch
+	-h Get IP addresses from HPE switch
+	-f Get IP addresses from file
+
+Source:
+	IP-address/hostname of the router or path to a file with IP-addresses
 
 
 END;
