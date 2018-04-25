@@ -35,12 +35,12 @@ require_once 'HTTP/Request2.php';
 // DEFINITIONS ===============================================================
 
 define ('LOGIN'	,	'admin');
-define ('PASS'	,	'223344');
+define ('PASS'	,	'pass');
 define ('DEBUG'	,	false);
-define ('EXCLUDE',	'/home/dnikitin/.phone_touch_exclude');
+define ('EXCLUDE',	'/PATH-TO/.phone_touch_exclude');
 define ('CMD_SSH',	'/usr/bin/sshpass -f /home/dnikitin/.netsecret ssh 00uc_net@');
 define ('CMD_ARP',	' "disp arp | inc 0090.8f85"');
-define ('CLOGIN',	'/home/dnikitin/bin/clogin -u 00uc_net -c "terminal length 0; show arp | inc 0090.8f85; exit" '); 
+define ('CLOGIN',	'/PATH-TO/clogin -u 00uc_net -c "terminal length 0; show arp | inc 0090.8f85; exit" '); 
 
 if (DEBUG) {
 	error_reporting(E_ALL);
