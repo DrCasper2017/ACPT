@@ -3,8 +3,11 @@
 //#############################################################################
 //
 //   AudioCodes IP Phones web-API control script
-//   v.2.2
+//   v.2.3
 //   Coded by Dmitry Nikitin (d.nikitin@gge.ru)
+//
+//   Fixes:
+//   28.08.2019 - "break" replaced with "return" due to changes in PHP7
 //
 //   Command-line options:
 //   -R Force ALL found devices to reboot
@@ -35,12 +38,12 @@ require_once 'HTTP/Request2.php';
 // DEFINITIONS ===============================================================
 
 define ('LOGIN'	,	'admin');
-define ('PASS'	,	'pass');
+define ('PASS'	,	'223344');
 define ('DEBUG'	,	false);
-define ('EXCLUDE',	'/PATH-TO/.phone_touch_exclude');
-define ('CMD_SSH',	'/usr/bin/sshpass -f /home/dnikitin/.netsecret ssh 00uc_net@');
-define ('CMD_ARP',	' "disp arp | inc 0090.8f85"');
-define ('CLOGIN',	'/PATH-TO/clogin -u 00uc_net -c "terminal length 0; show arp | inc 0090.8f85; exit" '); 
+define ('EXCLUDE',	'/PATH-TO-EXCLUSIONS/.phone_touch_exclude');
+define ('CMD_SSH',	'/usr/bin/sshpass -f /PATH-TO-SECRETS/.netsecret ssh USERNAME@');
+define ('CMD_ARP',	' "disp arp | inc 0090.8f"');
+define ('CLOGIN',	'/PATH-TO-CLOGIN/clogin -u USERNAME -c "terminal length 0; show arp | inc 0090.8f85; exit" '); 
 
 if (DEBUG) {
 	error_reporting(E_ALL);
@@ -86,7 +89,7 @@ if (count($argv) <= 1) {
 			$count++;
 			if (count($exlist)) {
 				if (!in_array($mac, $exlist)) {
-					//if ($count > 10) break; // TEST SUITE
+					//if ($count > 10) return; // TEST SUITE
 					$status = checkStatus($ip);
 					if ($status == 0) { // Unregistered
 						if ($argv[1] == '-R' || $argv[1] == '-r') {
@@ -108,7 +111,7 @@ if (count($argv) <= 1) {
 				}
 			}
 		}
-		break;
+		return;
 	} else {
 		showHelp(preg_replace('/^.*\//', '', $argv[0]));
 	}
